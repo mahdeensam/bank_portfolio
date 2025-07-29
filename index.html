@@ -66,8 +66,7 @@
             font-size: 14px;
             font-weight: 500;
             transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-        }
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);}
 
         .nav-btn:hover {
             transform: translateY(-2px);
@@ -328,16 +327,16 @@
                         <canvas id="creTypeChart" class="chart-canvas"></canvas>
                     </div>
                     <div class="chart-container">
-                        <h3 class="chart-title">CRE Geographic Distribution</h3>
-                        <canvas id="creGeoChart" class="chart-canvas"></canvas>
+                        <h3 class="chart-title">CRE Capital Utilization</h3>
+                        <canvas id="creCapitalChart" class="chart-canvas"></canvas>
                     </div>
                     <div class="chart-container">
                         <h3 class="chart-title">CRE Risk Assessment</h3>
                         <canvas id="creRiskChart" class="chart-canvas"></canvas>
                     </div>
                     <div class="chart-container">
-                        <h3 class="chart-title">CRE Loan-to-Value Distribution</h3>
-                        <canvas id="creLtvChart" class="chart-canvas"></canvas>
+                        <h3 class="chart-title">CRE Lending Capacity vs Limits</h3>
+                        <canvas id="creCapacityChart" class="chart-canvas"></canvas>
                     </div>
                 </div>
                 <div class="data-table">
@@ -345,11 +344,11 @@
                     <table id="creTable">
                         <thead>
                             <tr>
-                                <th>Property Type/Location</th>
-                                <th>Outstanding Balance</th>
-                                <th>Number of Loans</th>
-                                <th>% of Portfolio</th>
-                                <th>Average LTV</th>
+                                <th>Property Type</th>
+                                <th>Book Balance</th>
+                                <th>Total Exposure</th>
+                                <th>% of Capital</th>
+                                <th>Bank Limit</th>
                                 <th>Risk Category</th>
                             </tr>
                         </thead>
@@ -500,50 +499,43 @@
                     }
                 }
 
-                // Process CRE Concentration data
+                // Process CRE Concentration data - Fixed to use actual column structure
                 if (workbook.Sheets["CRE Concentration"]) {
                     const creSheet = workbook.Sheets["CRE Concentration"];
                     const creRawData = XLSX.utils.sheet_to_json(creSheet, { header: 1 });
                     
-                    // Log the first few rows to understand the structure
-                    console.log("CRE Sheet first 10 rows:", creRawData.slice(0, 10));
-                    
+                    // Find the header row
+                    let headerRowIndex = -1;
                     for (let i = 0; i < creRawData.length; i++) {
-                        const row = creRawData[i];
-                        if (row && row[0] && typeof row[0] === 'string' && 
-                            !row[0].includes('Androscoggin Bank') && 
-                            !row[0].includes('Commercial Real Estate') &&
-                            !row[0].includes('Bank Capital') &&
-                            !row[0].toLowerCase().includes('grand total') &&
-                            !row[0].toLowerCase().includes('total') &&
-                            row[0] !== '') {
-                            
-                            // Try multiple columns for LTV data
-                            let ltvValue = 0;
-                            for (let j = 4; j < Math.min(row.length, 10); j++) {
-                                const potentialLTV = this.parseNumber(row[j]);
-                                // Look for values that could be LTV (typically 0-100 range, or 0-1 if decimal)
-                                if (potentialLTV > 0 && potentialLTV <= 100) {
-                                    ltvValue = potentialLTV;
-                                    break;
-                                } else if (potentialLTV > 0 && potentialLTV <= 1) {
-                                    ltvValue = potentialLTV * 100; // Convert decimal to percentage
-                                    break;
+                        if (creRawData[i][0] === "Row Labels") {
+                            headerRowIndex = i;
+                            break;
+                        }
+                    }
+
+                    if (headerRowIndex !== -1) {
+                        const headers = creRawData[headerRowIndex];
+                        for (let i = headerRowIndex + 1; i < creRawData.length; i++) {
+                            const row = creRawData[i];
+                            if (row && row[0] && typeof row[0] === 'string' && 
+                                !row[0].toLowerCase().includes('grand total') &&
+                                !row[0].toLowerCase().includes('total')) {
+                                
+                                const creItem = {
+                                    "Property Type": row[0],
+                                    "Sum of Book Balance": this.parseNumber(row[1]),
+                                    "Sum of Total Exposure": this.parseNumber(row[2]),
+                                    "Book as % of Capital": this.parseNumber(row[3]),
+                                    "Exposure as % of Capital": this.parseNumber(row[4]),
+                                    "Bank Limit": this.parseNumber(row[5]),
+                                    "Lending Cap": this.parseNumber(row[6]),
+                                    "Remaining Lending Limit": this.parseNumber(row[7]),
+                                    "% to Cap": this.parseNumber(row[8])
+                                };
+                                
+                                if (creItem["Property Type"] && creItem["Sum of Book Balance"] > 0) {
+                                    this.data.creConcentration.push(creItem);
                                 }
-                            }
-                            
-                            const creItem = {
-                                "Property Type": row[0],
-                                "Outstanding Balance": this.parseNumber(row[1]),
-                                "Number of Loans": this.parseNumber(row[2]),
-                                "Percentage": this.parseNumber(row[3]),
-                                "Average LTV": ltvValue
-                            };
-                            
-                            // Debug: Log the LTV values to see what we're getting
-                            if (creItem["Property Type"] && creItem["Outstanding Balance"] > 0) {
-                                console.log(`CRE Item: ${creItem["Property Type"]}, LTV: ${creItem["Average LTV"]}, Raw row:`, row);
-                                this.data.creConcentration.push(creItem);
                             }
                         }
                     }
@@ -573,12 +565,10 @@
             parseNumber(value) {
                 if (typeof value === 'number') return value;
                 if (typeof value === 'string') {
-                    // Handle percentages - if it contains %, parse as percentage
                     if (value.includes('%')) {
                         const num = parseFloat(value.replace(/[,$%]/g, ''));
-                        return isNaN(num) ? 0 : num; // Return as decimal (e.g., 75% becomes 75, not 0.75)
+                        return isNaN(num) ? 0 : num / 100; // Convert percentage to decimal
                     }
-                    // Handle regular numbers
                     const num = parseFloat(value.replace(/[,$]/g, ''));
                     return isNaN(num) ? 0 : num;
                 }
@@ -607,19 +597,19 @@
             processCREData() {
                 this.creMetrics = {
                     totalProperties: this.data.creConcentration.length,
-                    totalCREBalance: this.data.creConcentration.reduce((sum, item) => sum + (item["Outstanding Balance"] || 0), 0),
-                    totalCRELoans: this.data.creConcentration.reduce((sum, item) => sum + (item["Number of Loans"] || 0), 0),
-                    averageLTV: this.data.creConcentration.length > 0 ? 
-                        this.data.creConcentration.reduce((sum, item) => sum + (item["Average LTV"] || 0), 0) / this.data.creConcentration.length : 0,
-                    highRiskProperties: this.data.creConcentration.filter(item => (item["Average LTV"] || 0) > 80).length
+                    totalCREBalance: this.data.creConcentration.reduce((sum, item) => sum + (item["Sum of Book Balance"] || 0), 0),
+                    totalCREExposure: this.data.creConcentration.reduce((sum, item) => sum + (item["Sum of Total Exposure"] || 0), 0),
+                    averageCapitalRatio: this.data.creConcentration.length > 0 ? 
+                        this.data.creConcentration.reduce((sum, item) => sum + (item["Book as % of Capital"] || 0), 0) / this.data.creConcentration.length : 0,
+                    highRiskProperties: this.data.creConcentration.filter(item => (item["Book as % of Capital"] || 0) > 0.4).length
                 };
 
-                this.data.creConcentration.sort((a, b) => (b["Outstanding Balance"] || 0) - (a["Outstanding Balance"] || 0));
+                this.data.creConcentration.sort((a, b) => (b["Sum of Book Balance"] || 0) - (a["Sum of Book Balance"] || 0));
             }
 
             processOverviewData() {
                 const totalCIBalance = this.data.ciConcentration.reduce((sum, item) => sum + (item["Sum of Net Curr Book Balance"] || 0), 0);
-                const totalCREBalance = this.data.creConcentration.reduce((sum, item) => sum + (item["Outstanding Balance"] || 0), 0);
+                const totalCREBalance = this.data.creConcentration.reduce((sum, item) => sum + (item["Sum of Book Balance"] || 0), 0);
                 
                 this.overviewMetrics = {
                     totalPortfolio: totalCIBalance + totalCREBalance,
@@ -701,37 +691,26 @@
             renderCREMetrics() {
                 const metricsGrid = document.getElementById('cre-metrics-grid');
                 
-                // Format total loans properly
-                const totalLoans = this.creMetrics.totalCRELoans;
-                let formattedTotalLoans;
-                if (totalLoans >= 1000000) {
-                    formattedTotalLoans = `${(totalLoans / 1000000).toFixed(1)}M`;
-                } else if (totalLoans >= 1000) {
-                    formattedTotalLoans = `${(totalLoans / 1000).toFixed(1)}K`;
-                } else {
-                    formattedTotalLoans = Math.round(totalLoans).toString();
-                }
-
                 const metrics = [
                     {
                         value: this.creMetrics.totalProperties,
                         label: 'Property Types'
                     },
                     {
-                        value: `${(this.creMetrics.totalCREBalance / 1000000).toFixed(1)}M`,
-                        label: 'CRE Portfolio'
+                        value: `$${(this.creMetrics.totalCREBalance / 1000000).toFixed(1)}M`,
+                        label: 'CRE Book Balance'
                     },
                     {
-                        value: formattedTotalLoans,
-                        label: 'Total CRE Loans'
+                        value: `$${(this.creMetrics.totalCREExposure / 1000000).toFixed(1)}M`,
+                        label: 'CRE Total Exposure'
                     },
                     {
-                        value: `${this.creMetrics.averageLTV.toFixed(1)}%`,
-                        label: 'Average LTV'
+                        value: `${(this.creMetrics.averageCapitalRatio * 100).toFixed(1)}%`,
+                        label: 'Avg Capital Ratio'
                     },
                     {
                         value: this.creMetrics.highRiskProperties,
-                        label: 'High LTV Properties'
+                        label: 'High Risk Properties'
                     }
                 ];
 
@@ -784,12 +763,11 @@
             }
 
             renderCRECharts() {
-    this.renderCRETypeChart();
-    this.renderCREGeoChart();
-    this.renderCRERiskChart();
-    this.renderCRELtvChart(); // <- Add the correct function here
-}
-
+                this.renderCRETypeChart();
+                this.renderCRECapitalChart();
+                this.renderCRERiskChart();
+                this.renderCRECapacityChart();
+            }
 
             renderOverviewCharts() {
                 this.renderPortfolioCompositionChart();
@@ -833,7 +811,7 @@
                             tooltip: {
                                 callbacks: {
                                     label: function(context) {
-                                        return `${context.label}: ${context.parsed.toFixed(1)}M`;
+                                        return `${context.label}: $${context.parsed.toFixed(1)}M`;
                                     }
                                 }
                             }
@@ -897,7 +875,6 @@
                     }
                 });
             }
-
             renderCIRiskChart() {
                 const ctx = document.getElementById('ciRiskChart').getContext('2d');
                 
@@ -1008,8 +985,8 @@
                     data: {
                         labels: top8Properties.map(item => item["Property Type"]),
                         datasets: [{
-                            label: 'Outstanding Balance ($M)',
-                            data: top8Properties.map(item => (item["Outstanding Balance"] || 0) / 1000000),
+                            label: 'Book Balance ($M)',
+                            data: top8Properties.map(item => (item["Sum of Book Balance"] || 0) / 1000000),
                             backgroundColor: '#2980b9',
                             borderWidth: 1,
                             borderColor: '#fff'
@@ -1023,7 +1000,7 @@
                                 beginAtZero: true,
                                 title: {
                                     display: true,
-                                    text: 'Outstanding Balance ($M)'
+                                    text: 'Book Balance ($M)'
                                 }
                             },
                             x: {
@@ -1039,7 +1016,7 @@
                             tooltip: {
                                 callbacks: {
                                     label: function(context) {
-                                        return `${context.parsed.y.toFixed(1)}M`;
+                                        return `$${context.parsed.y.toFixed(1)}M`;
                                     }
                                 }
                             }
@@ -1048,40 +1025,54 @@
                 });
             }
 
-            renderCREGeoChart() {
-                const ctx = document.getElementById('creGeoChart').getContext('2d');
+            renderCRECapitalChart() {
+                const ctx = document.getElementById('creCapitalChart').getContext('2d');
+                const top8Properties = this.data.creConcentration.slice(0, 8);
                 
-                if (this.charts.creGeo) this.charts.creGeo.destroy();
+                if (this.charts.creCapital) this.charts.creCapital.destroy();
                 
-                this.charts.creGeo = new Chart(ctx, {
-                    type: 'doughnut',
+                this.charts.creCapital = new Chart(ctx, {
+                    type: 'bar',
                     data: {
-                        labels: this.data.creConcentration.map(item => item["Property Type"]),
+                        labels: top8Properties.map(item => item["Property Type"]),
                         datasets: [{
-                            data: this.data.creConcentration.map(item => item["Number of Loans"] || 0),
-                            backgroundColor: [
-                                '#e74c3c', '#3498db', '#2ecc71', '#f39c12',
-                                '#9b59b6', '#1abc9c', '#e67e22', '#95a5a6'
-                            ],
-                            borderWidth: 2,
+                            label: 'Capital Utilization %',
+                            data: top8Properties.map(item => (item["Book as % of Capital"] || 0) * 100),
+                            backgroundColor: top8Properties.map(item => {
+                                const ratio = item["Book as % of Capital"] || 0;
+                                if (ratio > 0.4) return '#e74c3c';
+                                if (ratio > 0.25) return '#f39c12';
+                                return '#27ae60';
+                            }),
+                            borderWidth: 1,
                             borderColor: '#fff'
                         }]
                     },
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Percentage of Capital'
+                                }
+                            },
+                            x: {
+                                ticks: {
+                                    maxRotation: 45
+                                }
+                            }
+                        },
                         plugins: {
                             legend: {
-                                position: 'right',
-                                labels: {
-                                    boxWidth: 12,
-                                    padding: 8
-                                }
+                                display: false
                             },
                             tooltip: {
                                 callbacks: {
                                     label: function(context) {
-                                        return `${context.label}: ${context.parsed} loans`;
+                                        return `${context.parsed.y.toFixed(2)}% of capital`;
                                     }
                                 }
                             }
@@ -1094,9 +1085,9 @@
                 const ctx = document.getElementById('creRiskChart').getContext('2d');
                 
                 const riskCategories = {
-                    low: this.data.creConcentration.filter(item => (item["Average LTV"] || 0) <= 70).length,
-                    medium: this.data.creConcentration.filter(item => (item["Average LTV"] || 0) > 70 && (item["Average LTV"] || 0) <= 80).length,
-                    high: this.data.creConcentration.filter(item => (item["Average LTV"] || 0) > 80).length
+                    low: this.data.creConcentration.filter(item => (item["Book as % of Capital"] || 0) <= 0.25).length,
+                    medium: this.data.creConcentration.filter(item => (item["Book as % of Capital"] || 0) > 0.25 && (item["Book as % of Capital"] || 0) <= 0.4).length,
+                    high: this.data.creConcentration.filter(item => (item["Book as % of Capital"] || 0) > 0.4).length
                 };
 
                 if (this.charts.creRisk) this.charts.creRisk.destroy();
@@ -1104,7 +1095,7 @@
                 this.charts.creRisk = new Chart(ctx, {
                     type: 'pie',
                     data: {
-                        labels: ['Low Risk (≤70% LTV)', 'Medium Risk (70-80% LTV)', 'High Risk (>80% LTV)'],
+                        labels: ['Low Risk (≤25%)', 'Medium Risk (25-40%)', 'High Risk (>40%)'],
                         datasets: [{
                             data: [riskCategories.low, riskCategories.medium, riskCategories.high],
                             backgroundColor: ['#27ae60', '#f39c12', '#e74c3c'],
@@ -1131,69 +1122,63 @@
                 });
             }
 
-            renderCRELtvChart() {
-    const ctx = document.getElementById('creLtvChart').getContext('2d');
-
-    if (this.charts.creLtv) this.charts.creLtv.destroy();
-
-    // Get raw LTV values (already in percentage like 0.5%)
-    const ltvValues = this.data.creConcentration.map(item => item["Average LTV"] || 0);
-
-    // Dynamically calculate max Y-axis value (e.g., 0.6% → max 1%)
-    const maxLtvValue = Math.max(...ltvValues);
-    const yAxisMax = Math.ceil((maxLtvValue + 0.1) * 10) / 10; // round up to next 0.1%
-
-    this.charts.creLtv = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: this.data.creConcentration.map(item => item["Property Type"]),
-            datasets: [{
-                label: 'Average LTV %',
-                data: ltvValues,
-                backgroundColor: ltvValues.map(ltv => {
-                    if (ltv > 80) return '#e74c3c';
-                    if (ltv > 70) return '#f39c12';
-                    return '#27ae60';
-                }),
-                borderWidth: 1,
-                borderColor: '#fff'
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    max: yAxisMax,
-                    title: {
-                        display: true,
-                        text: 'Loan-to-Value Ratio (%)'
-                    }
-                },
-                x: {
-                    ticks: {
-                        maxRotation: 45
-                    }
-                }
-            },
-            plugins: {
-                legend: {
-                    display: false
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            return `LTV: ${context.parsed.y.toFixed(1)}%`;
+            renderCRECapacityChart() {
+                const ctx = document.getElementById('creCapacityChart').getContext('2d');
+                const top8Properties = this.data.creConcentration.slice(0, 8);
+                
+                if (this.charts.creCapacity) this.charts.creCapacity.destroy();
+                
+                this.charts.creCapacity = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: top8Properties.map(item => item["Property Type"]),
+                        datasets: [
+                            {
+                                label: 'Used Capacity',
+                                data: top8Properties.map(item => ((item["% to Cap"] || 0) * 100)),
+                                backgroundColor: '#3498db',
+                                borderWidth: 1
+                            },
+                            {
+                                label: 'Available Capacity',
+                                data: top8Properties.map(item => (100 - ((item["% to Cap"] || 0) * 100))),
+                                backgroundColor: '#ecf0f1',
+                                borderWidth: 1
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                stacked: true,
+                                ticks: {
+                                    maxRotation: 45
+                                }
+                            },
+                            y: {
+                                stacked: true,
+                                beginAtZero: true,
+                                max: 100,
+                                title: {
+                                    display: true,
+                                    text: 'Capacity Utilization %'
+                                }
+                            }
+                        },
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        return `${context.dataset.label}: ${context.parsed.y.toFixed(1)}%`;
+                                    }
+                                }
+                            }
                         }
                     }
-                }
+                });
             }
-        }
-    });
-}
-
-
 
             renderPortfolioCompositionChart() {
                 const ctx = document.getElementById('portfolioCompositionChart').getContext('2d');
@@ -1237,9 +1222,9 @@
                 const ciMediumRisk = this.data.ciConcentration.filter(item => (item["Book as % of Capital"] || 0) > 0.10 && (item["Book as % of Capital"] || 0) <= 0.20).length;
                 const ciLowRisk = this.data.ciConcentration.filter(item => (item["Book as % of Capital"] || 0) <= 0.10).length;
                 
-                const creHighRisk = this.data.creConcentration.filter(item => (item["Average LTV"] || 0) > 80).length;
-                const creMediumRisk = this.data.creConcentration.filter(item => (item["Average LTV"] || 0) > 70 && (item["Average LTV"] || 0) <= 80).length;
-                const creLowRisk = this.data.creConcentration.filter(item => (item["Average LTV"] || 0) <= 70).length;
+                const creHighRisk = this.data.creConcentration.filter(item => (item["Book as % of Capital"] || 0) > 0.4).length;
+                const creMediumRisk = this.data.creConcentration.filter(item => (item["Book as % of Capital"] || 0) > 0.25 && (item["Book as % of Capital"] || 0) <= 0.4).length;
+                const creLowRisk = this.data.creConcentration.filter(item => (item["Book as % of Capital"] || 0) <= 0.25).length;
 
                 if (this.charts.riskComparison) this.charts.riskComparison.destroy();
                 
@@ -1292,25 +1277,24 @@
                 
                 if (this.charts.limits) this.charts.limits.destroy();
                 
-                const top5CI = this.data.ciConcentration.slice(0, 5);
+                const top5CRE = this.data.creConcentration.slice(0, 5);
                 
                 this.charts.limits = new Chart(ctx, {
                     type: 'bar',
                     data: {
-                        labels: top5CI.map(item => item["Row Labels"]),
+                        labels: top5CRE.map(item => item["Property Type"]),
                         datasets: [
                             {
-                                label: 'Current Exposure',
-                                data: top5CI.map(item => (item["Book as % of Capital"] || 0) * 100),
+                                label: 'Current Exposure (%)',
+                                data: top5CRE.map(item => (item["Book as % of Capital"] || 0) * 100),
                                 backgroundColor: '#3498db',
                                 borderWidth: 1
                             },
                             {
-                                label: 'Regulatory Limit (35%)',
-                                data: new Array(5).fill(35),
+                                label: 'Bank Limit (%)',
+                                data: top5CRE.map(item => (item["Bank Limit"] || 0) * 100),
                                 backgroundColor: '#e74c3c',
-                                borderWidth: 1,
-                                type: 'line'
+                                borderWidth: 1
                             }
                         ]
                     },
@@ -1320,7 +1304,6 @@
                         scales: {
                             y: {
                                 beginAtZero: true,
-                                max: 40,
                                 title: {
                                     display: true,
                                     text: 'Percentage of Capital'
@@ -1409,11 +1392,11 @@
                     return `
                         <tr>
                             <td>${item["Row Labels"] || 'N/A'}</td>
-                            <td>${((item["Sum of Net Curr Book Balance"] || 0) / 1000000).toFixed(2)}M</td>
-                            <td>${((item["Sum of TotalExp"] || 0) / 1000000).toFixed(2)}M</td>
+                            <td>$${((item["Sum of Net Curr Book Balance"] || 0) / 1000000).toFixed(2)}M</td>
+                            <td>$${((item["Sum of TotalExp"] || 0) / 1000000).toFixed(2)}M</td>
                             <td>${capitalRatio.toFixed(2)}%</td>
                             <td class="${riskClass}">${riskLevel}</td>
-                            <td>${((item["Remaining Lending Limit "] || 0) / 1000000).toFixed(2)}M</td>
+                            <td>$${((item["Remaining Lending Limit "] || 0) / 1000000).toFixed(2)}M</td>
                         </tr>
                     `;
                 }).join('');
@@ -1423,28 +1406,25 @@
                 const tableBody = document.getElementById('creTableBody');
                 
                 tableBody.innerHTML = this.data.creConcentration.map(item => {
-                    const ltv = item["Average LTV"] || 0;
+                    const capitalRatio = (item["Book as % of Capital"] || 0) * 100;
                     let riskClass = 'risk-low';
                     let riskLevel = 'Low';
                     
-                    if (ltv > 80) {
+                    if (capitalRatio > 40) {
                         riskClass = 'risk-high';
                         riskLevel = 'High';
-                    } else if (ltv > 70) {
+                    } else if (capitalRatio > 25) {
                         riskClass = 'risk-medium';
                         riskLevel = 'Medium';
                     }
 
-                    const portfolioPercentage = this.creMetrics.totalCREBalance > 0 ? 
-                        ((item["Outstanding Balance"] || 0) / this.creMetrics.totalCREBalance * 100) : 0;
-
                     return `
                         <tr>
                             <td>${item["Property Type"] || 'N/A'}</td>
-                            <td>${((item["Outstanding Balance"] || 0) / 1000000).toFixed(2)}M</td>
-                            <td>${((item["Number of Loans"] || 0) / 1000000).toFixed(2)}M</td>
-                            <td>${portfolioPercentage.toFixed(2)}%</td>
-                            <td>${ltv.toFixed(1)}%</td>
+                            <td>$${((item["Sum of Book Balance"] || 0) / 1000000).toFixed(2)}M</td>
+                            <td>$${((item["Sum of Total Exposure"] || 0) / 1000000).toFixed(2)}M</td>
+                            <td>${capitalRatio.toFixed(2)}%</td>
+                            <td>${((item["Bank Limit"] || 0) * 100).toFixed(1)}%</td>
                             <td class="${riskClass}">${riskLevel}</td>
                         </tr>
                     `;
@@ -1490,18 +1470,16 @@
                     });
                     filename = 'ci_concentration_analysis.csv';
                 } else if (dataType === 'cre') {
-                    csvContent = 'Property Type,Outstanding Balance,Number of Loans,Portfolio Percentage,Average LTV,Risk Level\n';
+                    csvContent = 'Property Type,Book Balance,Total Exposure,Capital Ratio,Bank Limit,Risk Level\n';
                     this.data.creConcentration.forEach(item => {
-                        const ltv = item["Average LTV"] || 0;
-                        const riskLevel = ltv > 80 ? 'High' : ltv > 70 ? 'Medium' : 'Low';
-                        const portfolioPercentage = this.creMetrics.totalCREBalance > 0 ? 
-                            ((item["Outstanding Balance"] || 0) / this.creMetrics.totalCREBalance * 100) : 0;
+                        const capitalRatio = (item["Book as % of Capital"] || 0) * 100;
+                        const riskLevel = capitalRatio > 40 ? 'High' : capitalRatio > 25 ? 'Medium' : 'Low';
 
                         csvContent += `"${item["Property Type"] || 'N/A'}",`;
-                        csvContent += `${((item["Outstanding Balance"] || 0) / 1000000).toFixed(2)},`;
-                        csvContent += `${item["Number of Loans"] || 0},`;
-                        csvContent += `${portfolioPercentage.toFixed(2)}%,`;
-                        csvContent += `${ltv.toFixed(1)}%,`;
+                        csvContent += `${((item["Sum of Book Balance"] || 0) / 1000000).toFixed(2)},`;
+                        csvContent += `${((item["Sum of Total Exposure"] || 0) / 1000000).toFixed(2)},`;
+                        csvContent += `${capitalRatio.toFixed(2)}%,`;
+                        csvContent += `${((item["Bank Limit"] || 0) * 100).toFixed(1)}%,`;
                         csvContent += `${riskLevel}\n`;
                     });
                     filename = 'cre_concentration_analysis.csv';
